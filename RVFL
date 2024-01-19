@@ -1,0 +1,250 @@
+#No denormalization doned for the predictiobn
+import yfinance as yf
+from datetime import datetime
+
+def get_daily_stock_data(symbol, start_date, end_date):
+    try:
+        stock_data = yf.download(symbol, start=start_date, end=end_date)
+        return stock_data
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+# Example usage:
+symbol = 'TATAMOTORS.NS'
+
+# Set the start and end dates
+start_date = '2018-11-10'
+end_date = '2023-12-10'
+
+daily_data = get_daily_stock_data(symbol, start_date, end_date)
+
+if daily_data is not None and not daily_data.empty:
+    print(f"Daily Stock Data for {symbol} (from {start_date} to {end_date}):")
+    print(daily_data.head())
+else:
+    print(f"Failed to retrieve daily stock data for {symbol}.")
+
+"""Importing libraries"""
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+"""Loading DATA"""
+
+data = daily_data
+
+"""# Data preparation using Sliding window approach"""
+
+# Function to create sliding windows
+def create_sliding_windows(data, window_size):
+    windows = []
+    for i in range(len(data) - window_size + 1):
+        window = data.iloc[i:i + window_size]
+        windows.append(window.values.flatten())
+    return pd.DataFrame(windows)
+
+# Set your desired window size
+window_size = 5
+# You can change this value based on your requirement
+# Create sliding windows for the 'Close' column
+windows = create_sliding_windows(data['Close'], window_size)
+
+# Display the resulting 2D matrix
+print(windows[:5])
+
+windows.shape
+
+"""# Row wise normalization"""
+
+import pandas as pd
+import numpy as np
+
+# Assuming 'data' is a 1231x5 DataFrame
+# Set your desired window size
+window_size = 5
+
+# Function to normalize each row independently to the range [0, 1]
+def row_wise_normalization(windows):
+    normalized_windows = []
+
+    for i in range(len(windows)):
+        # Extract features (X) and target variable (Y)
+        X_window = windows.iloc[i, :-1]
+        Y_window = windows.iloc[i, -1]
+
+        # Normalize each element in the row of X to the range [0, 1]
+        X_normalized = (X_window - X_window.min()) / (X_window.max() - X_window.min())
+
+        # Normalize the last element in the row of Y to the range [0, 1]
+        Y_normalized = (Y_window - X_window.min()) / (X_window.max() - X_window.min())
+
+        # Append the normalized X and Y to the list
+        normalized_row = np.concatenate([X_normalized.values, np.array([Y_normalized])])
+        normalized_windows.append(normalized_row)
+
+    # Create a matrix from the list of normalized rows
+    normalized_data = np.array(normalized_windows)
+
+    return normalized_data
+
+# Apply row-wise normalization
+normalized_windows = row_wise_normalization(windows)
+
+# Display the resulting 2D matrix with normalized values
+print("Normalized Data:")
+print(normalized_windows[:5])
+
+"""# Splitting the data into Testing and Training Data"""
+
+from sklearn.model_selection import train_test_split
+
+# Assuming 'normalized_data' is a NumPy array
+X = normalized_windows[:, :-1]
+Y = normalized_windows[:, -1]
+
+# Split the data into training and testing sets
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+
+print(X_train.shape,Y_train.shape,X_test.shape,Y_test.shape,)
+
+# Applying sigmoid activation function
+def sigmoid(activation_result):
+    return 1 / (1 + np.exp(-activation_result))
+
+import numpy as np
+from sklearn.model_selection import KFold
+from sklearn.metrics import mean_squared_error
+
+def sigmoid(weighted_sum_fold):
+    return 1 / (1 + np.exp(-weighted_sum_fold))
+
+def perform_cross_validation(X, Y, hidden_layer_columns_range, A_values):
+    num_folds = 10
+    kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
+
+    best_mse = float('inf')
+    best_hidden_columns = None
+    best_A = None
+
+    for hidden_columns in hidden_layer_columns_range:
+        total_mse = 0.0
+
+        for A in A_values:
+            for train_index, valid_index in kf.split(X):
+                X_train_fold, X_valid_fold = X[train_index], X[valid_index]
+                Y_train_fold, Y_valid_fold = Y[train_index], Y[valid_index]
+
+                # Generate random weights for the hidden layer
+                hidden_layer_weights_fold = np.random.rand(X_train_fold.shape[1], hidden_columns)
+
+                # Calculate the total weighted sum for the validation set
+                hidden_valid_weights_fold = np.dot(X_valid_fold, hidden_layer_weights_fold)
+                activation_result_valid_fold = sigmoid(hidden_valid_weights_fold)
+                augmented_X_valid_fold = np.hstack((X_valid_fold, activation_result_valid_fold))
+
+                # Calculate output weights for the training set
+                D_fold = augmented_X_valid_fold
+                D_transpose_fold = np.transpose(D_fold)
+                term_inside_parentheses_fold = np.dot(D_fold, D_transpose_fold) + A * np.identity(X_valid_fold.shape[0])
+                inverse_term_fold = np.linalg.inv(term_inside_parentheses_fold)
+                Half_fold = np.dot(D_transpose_fold, inverse_term_fold)
+                output_weights_fold = np.dot(Half_fold, Y_valid_fold)
+
+                # Predict on the validation set
+                predicted_output_valid_fold = np.dot(augmented_X_valid_fold, output_weights_fold)
+
+                # Calculate Mean Squared Error for the validation set
+                mse_valid = mean_squared_error(Y_valid_fold, predicted_output_valid_fold)
+                total_mse += mse_valid
+
+        # Average MSE over the folds and A values
+        average_mse = total_mse / (num_folds * len(A_values))
+
+        # Print and update best values if needed
+        print(f"For Hidden Columns={hidden_columns}, Average MSE: {average_mse}")
+
+        if average_mse < best_mse:
+            best_mse = average_mse
+            best_hidden_columns = hidden_columns
+            best_A = A
+
+    print(f"Best Average MSE: {best_mse} achieved with Hidden Columns={best_hidden_columns} and Best A={best_A}")
+    return best_hidden_columns, best_A
+
+# Assuming X_train and Y_train are already defined
+# Define the range of hidden layer columns and A values to test
+hidden_columns_range = range(50, 1001, 50)
+A_values = np.logspace(-5, 5, 11)
+
+# Apply cross-validation
+best_hidden_columns, best_A = perform_cross_validation(X_train, Y_train, hidden_columns_range, A_values)
+
+"""# Hidden layer weights initilisation and Augementation"""
+
+# Generate random weights for the hidden layer (6x50 matrix)
+
+hidden_layer_weights = np.random.rand(X_train.shape[1], best_hidden_columns)
+
+# Calculating the total weighted sum
+weighted_sum = np.dot(X_train, hidden_layer_weights)
+
+"""activation function"""
+
+# Applying sigmoid to the total weighted sum
+activation_result = sigmoid(weighted_sum)
+# Augmenting the input features
+augmented_X_train = np.hstack((X_train, activation_result))
+
+"""# using Ridge regression"""
+
+D = augmented_X_train
+D_transpose = np.transpose(D)
+A = best_A  # Regularization parameter
+term_inside_parentheses = np.dot(D, D_transpose) + A * np.identity(X_train.shape[0])
+inverse_term = np.linalg.inv(term_inside_parentheses)
+Half = np.dot(D_transpose, inverse_term)
+
+# Calculate the output weights using the formula
+output_weights = np.dot(Half, Y_train)
+print("Output weights")
+print(output_weights[:5])
+print(output_weights.shape)
+
+# Apply the trained model to the test set
+hidden_test_weights = np.dot(X_test, hidden_layer_weights)
+activation_result_test = sigmoid(hidden_test_weights)
+augmented_X_test = np.hstack((X_test, activation_result_test))
+
+""" # using the formula T =DB"""
+
+# Calculate the total weighted sum for the test set
+predicted_output= np.dot(augmented_X_test, output_weights)
+
+predicted_output.shape
+
+"""# using MSE TO see the error"""
+
+from sklearn.metrics import mean_squared_error
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Calculate Mean Squared Error
+mse = mean_squared_error(Y_test, predicted_output)
+print(f"Mean Squared Error: {mse}")
+
+# Plotting the results
+plt.figure(figsize=(10, 6))
+sns.lineplot(x=range(len(Y_test)), y=Y_test, label="Actual Values")
+sns.lineplot(x=range(len(predicted_output)), y=predicted_output, label="Predicted Values")
+
+# Set labels and legend
+plt.xlabel('Sample Index')
+plt.ylabel('Target Value')
+plt.legend()
+plt.title('Actual vs Predicted Values with MSE')
+
+# Show the plot
+plt.show()
